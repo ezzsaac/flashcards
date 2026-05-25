@@ -195,7 +195,11 @@
             <div class="section-content">
 
                 <button class="deck-button" onclick="importDeck()">
-                    + Import Deck
+                    + Import Deck Folder
+                </button>
+
+                <button class="deck-button" onclick="deleteDeck()">
+                    Delete Deck
                 </button>
 
                 <div id="deckList"></div>
@@ -352,6 +356,22 @@
             });
         }
 
+        function removeDeck(id) {
+
+            return new Promise((resolve, reject) => {
+
+                const tx = db.transaction("decks", "readwrite");
+
+                const store = tx.objectStore("decks");
+
+                const req = store.delete(id);
+
+                req.onsuccess = () => resolve();
+
+                req.onerror = reject;
+            });
+        }
+
         // =====================================================
         // STATE
         // =====================================================
@@ -403,6 +423,22 @@
         }
 
         // =====================================================
+        // SORTING
+        // =====================================================
+
+        function naturalSort(a, b) {
+
+            return a.localeCompare(
+                b,
+                undefined,
+                {
+                    numeric: true,
+                    sensitivity: "base"
+                }
+            );
+        }
+
+        // =====================================================
         // IMPORT DECK
         // =====================================================
 
@@ -412,20 +448,23 @@
 
             input.type = "file";
 
+            input.webkitdirectory = true;
+
             input.multiple = true;
 
-            input.accept = ".png";
+            input.accept = "image/*";
 
             input.onchange = async () => {
 
                 const files = Array.from(input.files)
-                    .filter(f => f.type === "image/png");
+                    .filter(f => f.type.startsWith("image/"));
 
                 if (!files.length) return;
 
-                const deckName = prompt("Deck name:");
-
-                if (!deckName) return;
+                const deckName =
+                    files[0]
+                        .webkitRelativePath
+                        .split("/")[0];
 
                 const deck = {
 
@@ -438,7 +477,9 @@
 
                 for (const file of files) {
 
-                    const name = file.name.replace(/\.png$/i, "");
+                    const name = file.webkitRelativePath
+                        .replace(/^.*\//, "")
+                        .replace(/\.[^/.]+$/i, "");
 
                     deck.cards.push({
                         name,
@@ -457,12 +498,73 @@
         }
 
         // =====================================================
+        // DELETE DECK
+        // =====================================================
+
+        async function deleteDeck() {
+
+            const decks = await getAllDecks();
+
+            if (!decks.length) {
+
+                alert("No decks");
+
+                return;
+            }
+
+            const name = prompt(
+                "Delete which deck?\n\n" +
+                decks.join("\n")
+            );
+
+            if (!name) return;
+
+            if (!decks.includes(name)) {
+
+                alert("Deck not found");
+
+                return;
+            }
+
+            const ok = confirm(
+                `Delete deck "${name}"?`
+            );
+
+            if (!ok) return;
+
+            await removeDeck(name);
+
+            if (currentDeck && currentDeck.id === name) {
+
+                currentDeck = null;
+
+                fileMap.clear();
+
+                cards = [];
+
+                cardStates = {};
+
+                sidebar.innerHTML = "";
+
+                cardEl.innerHTML = `
+					<div class="empty">
+						Deck deleted
+					</div>
+				`;
+            }
+
+            await refreshDeckList();
+        }
+
+        // =====================================================
         // DECK LIST
         // =====================================================
 
         async function refreshDeckList() {
 
             const decks = await getAllDecks();
+
+            decks.sort(naturalSort);
 
             deckList.innerHTML = "";
 
@@ -504,6 +606,8 @@
 
                 cards.push(card.name);
             }
+
+            cards.sort(naturalSort);
 
             shuffled = {};
 
@@ -590,24 +694,35 @@
 
         function getCards(state) {
 
-            if (state === "all") return cards;
+            let list;
 
-            return cards.filter(c =>
-                cardStates[c] === state
-            );
+            if (state === "all") {
+
+                list = [...cards];
+
+            } else {
+
+                list = cards.filter(c =>
+                    cardStates[c] === state
+                );
+            }
+
+            list.sort(naturalSort);
+
+            return list;
         }
 
         function sortList(state, mode) {
 
             let list = getCards(state).slice();
 
-            if (mode === "az") {
+            if (mode === "rnd") {
 
-                list.sort();
+                list.sort(() => Math.random() - 0.5);
 
             } else {
 
-                list.sort(() => Math.random() - 0.5);
+                list.sort(naturalSort);
             }
 
             shuffled[state] = list;
