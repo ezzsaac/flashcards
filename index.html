@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <title>Flashcards PWA</title>
+
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#f0f0f0">
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            background: #f0f0f0;
+            height: 100dvh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 2px solid #222;
+            padding: 10px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .section {
+            margin-bottom: 12px;
+        }
+
+        .section h2,
+        .section h3 {
+            margin: 0 0 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .section.collapsed .section-content {
+            display: none;
+        }
+
+        .deck-button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            border: 1px solid #aaa;
+            background: #fafafa;
+            border-radius: 8px;
+            text-align: left;
+        }
+
+        .deck-button:hover {
+            background: #eee;
+        }
+
+        .list {
+            margin-bottom: 10px;
+        }
+
+        .list h3 {
+            font-size: 16px;
+        }
+
+        .list.collapsed ul {
+            display: none;
+        }
+
+        .list ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .list li {
+            padding: 4px 6px;
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            border-radius: 6px;
+        }
+
+        .list li:hover {
+            background: #eee;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            min-width: 0;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        button {
+            font-size: 15px;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+
+        input[type="range"] {
+            width: 120px;
+        }
+
+        .container {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+        }
+
+        .card {
+            flex: 1;
+            background: white;
+            border: 2px solid #222;
+            border-radius: 14px;
+            padding: 20px;
+            overflow: auto;
+            user-select: none;
+        }
+
+        .front-text {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            font-size: clamp(28px, 5vw, 72px);
+        }
+
+        .viewport {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+        }
+
+        .viewport img {
+            position: absolute;
+            left: 50%;
+            transform-origin: top center;
+            will-change: transform;
+        }
+
+        .empty {
+            padding: 20px;
+            text-align: center;
+            font-size: 22px;
+            color: #666;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="sidebar">
+
+        <div class="section" id="deckSection">
+
+            <h2 onclick="toggleSection('deckSection')">
+                <span>Decks</span>
+                <span>▼</span>
+            </h2>
+
+            <div class="section-content">
+
+                <button class="deck-button" onclick="importDeck()">
+                    + Import Deck
+                </button>
+
+                <div id="deckList"></div>
+
+            </div>
+
+        </div>
+
+        <hr>
+
+        <div id="sidebar"></div>
+
+    </div>
+
+    <div class="main">
+
+        <div class="top-bar">
+
+            <div class="controls">
+
+                <button onclick="previousCard()">
+                    Previous
+                </button>
+
+                <button onclick="flipCard()">
+                    Flip
+                </button>
+
+                <button onclick="rateCard('unknown')">
+                    Unknown
+                </button>
+
+                <button onclick="rateCard('learning')">
+                    Learning
+                </button>
+
+                <button onclick="rateCard('known')">
+                    Known
+                </button>
+
+                <button onclick="removeFromCurrentList()">
+                    Remove From List
+                </button>
+
+                <button onclick="nextCard()">
+                    Next
+                </button>
+
+                <label>
+                    Scale
+                    <input type="range" id="scaleSlider" min="0" max="1" step="0.01" value="0.5">
+                </label>
+
+            </div>
+
+        </div>
+
+        <div class="container">
+
+            <div id="card" class="card">
+
+                <div class="empty">
+                    Import or open a deck
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <script>
+
+        // =====================================================
+        // DATABASE
+        // =====================================================
+
+        let db;
+
+        function openDB() {
+
+            return new Promise((resolve, reject) => {
+
+                const request = indexedDB.open("flashcardsDB", 1);
+
+                request.onupgradeneeded = e => {
+
+                    const db = e.target.result;
+
+                    if (!db.objectStoreNames.contains("decks")) {
+
+                        db.createObjectStore("decks", {
+                            keyPath: "id"
+                        });
+                    }
+                };
+
+                request.onsuccess = e => {
+
+                    db = e.target.result;
+
+                    resolve();
+                };
+
+                request.onerror = reject;
+            });
+        }
+
+        function saveDeck(deck) {
+
+            return new Promise((resolve, reject) => {
+
+                const tx = db.transaction("decks", "readwrite");
+
+                const store = tx.objectStore("decks");
+
+                const req = store.put(deck);
+
+                req.onsuccess = () => resolve();
+
+                req.onerror = reject;
+            });
+        }
+
+        function loadDeck(id) {
+
+            return new Promise((resolve, reject) => {
+
+                const tx = db.transaction("decks", "readonly");
+
+                const store = tx.objectStore("decks");
+
+                const req = store.get(id);
+
+                req.onsuccess = () => resolve(req.result);
+
+                req.onerror = reject;
+            });
+        }
+
+        function getAllDecks() {
+
+            return new Promise((resolve, reject) => {
+
+                const tx = db.transaction("decks", "readonly");
+
+                const store = tx.objectStore("decks");
+
+                const req = store.getAllKeys();
+
+                req.onsuccess = () => resolve(req.result);
+
+                req.onerror = reject;
+            });
+        }
+
+        // =====================================================
+        // STATE
+        // =====================================================
+
+        let currentDeck = null;
+
+        let fileMap = new Map();
+
+        let cards = [];
+
+        let cardStates = {};
+
+        let currentList = "all";
+
+        let shuffled = {};
+
+        let index = 0;
+
+        let showingFront = true;
+
+        let historyStack = [];
+
+        let imgNaturalWidth = 0;
+
+        let imgNaturalHeight = 0;
+
+        // =====================================================
+        // ELEMENTS
+        // =====================================================
+
+        const cardEl = document.getElementById("card");
+
+        const sidebar = document.getElementById("sidebar");
+
+        const deckList = document.getElementById("deckList");
+
+        const scaleSlider = document.getElementById("scaleSlider");
+
+        // =====================================================
+        // UI
+        // =====================================================
+
+        function toggleSection(id) {
+
+            document
+                .getElementById(id)
+                .classList
+                .toggle("collapsed");
+        }
+
+        // =====================================================
+        // IMPORT DECK
+        // =====================================================
+
+        async function importDeck() {
+
+            const input = document.createElement("input");
+
+            input.type = "file";
+
+            input.multiple = true;
+
+            input.accept = ".png";
+
+            input.onchange = async () => {
+
+                const files = Array.from(input.files)
+                    .filter(f => f.type === "image/png");
+
+                if (!files.length) return;
+
+                const deckName = prompt("Deck name:");
+
+                if (!deckName) return;
+
+                const deck = {
+
+                    id: deckName,
+
+                    cards: [],
+
+                    progress: {}
+                };
+
+                for (const file of files) {
+
+                    const name = file.name.replace(/\.png$/i, "");
+
+                    deck.cards.push({
+                        name,
+                        image: file
+                    });
+                }
+
+                await saveDeck(deck);
+
+                await refreshDeckList();
+
+                await openDeck(deckName);
+            };
+
+            input.click();
+        }
+
+        // =====================================================
+        // DECK LIST
+        // =====================================================
+
+        async function refreshDeckList() {
+
+            const decks = await getAllDecks();
+
+            deckList.innerHTML = "";
+
+            for (const name of decks) {
+
+                const button = document.createElement("button");
+
+                button.className = "deck-button";
+
+                button.textContent = name;
+
+                button.onclick = () => openDeck(name);
+
+                deckList.appendChild(button);
+            }
+        }
+
+        // =====================================================
+        // OPEN DECK
+        // =====================================================
+
+        async function openDeck(deckId) {
+
+            const deck = await loadDeck(deckId);
+
+            if (!deck) return;
+
+            currentDeck = deck;
+
+            fileMap.clear();
+
+            cards = [];
+
+            cardStates = deck.progress || {};
+
+            for (const card of deck.cards) {
+
+                fileMap.set(card.name, card.image);
+
+                cards.push(card.name);
+            }
+
+            shuffled = {};
+
+            historyStack = [];
+
+            index = 0;
+
+            currentList = "all";
+
+            showingFront = true;
+
+            renderSidebar();
+
+            if (cards.length) {
+
+                showFront(cards[0]);
+            }
+        }
+
+        // =====================================================
+        // SIDEBAR
+        // =====================================================
+
+        function renderSidebar() {
+
+            sidebar.innerHTML = "";
+
+            createList("All", "all");
+
+            createList("Unknown", "unknown");
+
+            createList("Learning", "learning");
+
+            createList("Known", "known");
+        }
+
+        function createList(title, state) {
+
+            const wrapper = document.createElement("div");
+
+            wrapper.className = "list";
+
+            const header = document.createElement("h3");
+
+            header.innerHTML = `
+				<span>${title}</span>
+				<span>
+					<button onclick="sortList('${state}', 'az'); event.stopPropagation()">A-Z</button>
+					<button onclick="sortList('${state}', 'rnd'); event.stopPropagation()">🎲</button>
+				</span>
+			`;
+
+            header.onclick = () =>
+                wrapper.classList.toggle("collapsed");
+
+            const ul = document.createElement("ul");
+
+            getCards(state).forEach(name => {
+
+                const li = document.createElement("li");
+
+                li.textContent = name;
+
+                li.onclick = () => {
+
+                    currentList = state;
+
+                    index = getCards(state).indexOf(name);
+
+                    showingFront = true;
+
+                    showFront(name);
+                };
+
+                ul.appendChild(li);
+            });
+
+            wrapper.appendChild(header);
+
+            wrapper.appendChild(ul);
+
+            sidebar.appendChild(wrapper);
+        }
+
+        function getCards(state) {
+
+            if (state === "all") return cards;
+
+            return cards.filter(c =>
+                cardStates[c] === state
+            );
+        }
+
+        function sortList(state, mode) {
+
+            let list = getCards(state).slice();
+
+            if (mode === "az") {
+
+                list.sort();
+
+            } else {
+
+                list.sort(() => Math.random() - 0.5);
+            }
+
+            shuffled[state] = list;
+
+            historyStack = [];
+
+            currentList = state;
+
+            index = 0;
+
+            showingFront = true;
+
+            if (list.length) {
+
+                showFront(list[0]);
+            }
+        }
+
+        // =====================================================
+        // CARD DISPLAY
+        // =====================================================
+
+        function showFront(name) {
+
+            cardEl.innerHTML = `
+				<div class="front-text">
+					${name}
+				</div>
+			`;
+        }
+
+        function showBack(name) {
+
+            cardEl.innerHTML = "";
+
+            const viewport = document.createElement("div");
+
+            viewport.className = "viewport";
+
+            const img = document.createElement("img");
+
+            img.src = URL.createObjectURL(
+                fileMap.get(name)
+            );
+
+            img.onload = () => {
+
+                imgNaturalWidth = img.naturalWidth;
+
+                imgNaturalHeight = img.naturalHeight;
+
+                applyScale(img);
+            };
+
+            viewport.appendChild(img);
+
+            cardEl.appendChild(viewport);
+        }
+
+        function currentCards() {
+
+            return shuffled[currentList] ||
+                getCards(currentList);
+        }
+
+        function currentCardName() {
+
+            const list = currentCards();
+
+            if (!list.length) return null;
+
+            return list[index];
+        }
+
+        function flipCard() {
+
+            const name = currentCardName();
+
+            if (!name) return;
+
+            showingFront = !showingFront;
+
+            showingFront
+                ? showFront(name)
+                : showBack(name);
+        }
+
+        function nextCard() {
+
+            const list = currentCards();
+
+            if (!list.length) return;
+
+            historyStack.push(index);
+
+            index = (index + 1) % list.length;
+
+            showingFront = true;
+
+            showFront(list[index]);
+        }
+
+        function previousCard() {
+
+            const list = currentCards();
+
+            if (!list.length) return;
+
+            if (!historyStack.length) return;
+
+            index = historyStack.pop();
+
+            showingFront = true;
+
+            showFront(list[index]);
+        }
+
+        // =====================================================
+        // PROGRESS
+        // =====================================================
+
+        async function rateCard(state) {
+
+            const name = currentCardName();
+
+            if (!name) return;
+
+            cardStates[name] = state;
+
+            currentDeck.progress = cardStates;
+
+            await saveDeck(currentDeck);
+
+            renderSidebar();
+
+            nextCard();
+        }
+
+        async function removeFromCurrentList() {
+
+            if (currentList === "all") return;
+
+            const name = currentCardName();
+
+            if (!name) return;
+
+            if (cardStates[name] !== currentList) return;
+
+            delete cardStates[name];
+
+            currentDeck.progress = cardStates;
+
+            await saveDeck(currentDeck);
+
+            renderSidebar();
+
+            const list = currentCards();
+
+            if (!list.length) {
+
+                cardEl.innerHTML = `
+					<div class="empty">
+						No cards in this list
+					</div>
+				`;
+
+                return;
+            }
+
+            if (index >= list.length) {
+
+                index = 0;
+            }
+
+            showFront(list[index]);
+        }
+
+        // =====================================================
+        // SCALE
+        // =====================================================
+
+        scaleSlider.addEventListener("input", () => {
+
+            const img = cardEl.querySelector("img");
+
+            if (img) {
+
+                applyScale(img);
+            }
+        });
+
+        function applyScale(img) {
+
+            const t = parseFloat(scaleSlider.value);
+
+            const viewW = cardEl.clientWidth - 40;
+
+            const viewH = cardEl.clientHeight - 40;
+
+            const scaleToHeight =
+                viewH / imgNaturalHeight;
+
+            const scaleToWidth =
+                (viewW * 0.95) / imgNaturalWidth;
+
+            const scale =
+                scaleToWidth +
+                (scaleToHeight - scaleToWidth) * t;
+
+            img.style.transform =
+                `translateX(-50%) scale(${scale})`;
+        }
+
+        // =====================================================
+        // EVENTS
+        // =====================================================
+
+        cardEl.addEventListener("click", flipCard);
+
+        // =====================================================
+        // PWA
+        // =====================================================
+
+        if ("serviceWorker" in navigator) {
+
+            navigator.serviceWorker
+                .register("./service-worker.js");
+        }
+
+        // =====================================================
+        // STARTUP
+        // =====================================================
+
+        (async () => {
+
+            await openDB();
+
+            await refreshDeckList();
+
+            console.log("Flashcards ready");
+
+        })();
+
+    </script>
+
+</body>
+
+</html>
